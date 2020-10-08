@@ -7,20 +7,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"regexp"
 	"strconv"
 
+	log2 "github.com/sirupsen/logrus"
 	"github.com/zmap/zgrab2"
 )
 
 // Flags give the command-line flags for the banner module.
 type Flags struct {
 	zgrab2.BaseFlags
-	Probe    string `long:"probe" default:"\\n" description:"Probe to send to the server. Use triple slashes to escape, for example \\\\\\n is literal \\n" `
-	Pattern  string `long:"pattern" description:"Pattern to match, must be valid regexp."`
-	MaxTries int    `long:"max-tries" default:"1" description:"Number of tries for timeouts and connection errors before giving up."`
+	Probe     string `long:"probe" default:"\\n" description:"Probe to send to the server. Use triple slashes to escape, for example \\\\\\n is literal \\n" `
+	ProbeFile string `long:"probe-file" description:"File to get probe from."`
+	Pattern   string `long:"pattern" description:"Pattern to match, must be valid regexp."`
+	MaxTries  int    `long:"max-tries" default:"1" description:"Number of tries for timeouts and connection errors before giving up."`
 }
 
 // Module is the implementation of the zgrab2.Module interface.
@@ -98,11 +101,19 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 	f, _ := flags.(*Flags)
 	scanner.config = f
 	scanner.regex = regexp.MustCompile(scanner.config.Pattern)
+	if len(scanner.config.ProbeFile) > 0 {
+		probe, err := ioutil.ReadFile(scanner.config.ProbeFile)
+		if err != nil {
+			panic("Can't open Probe File")
+		}
+		scanner.config.Probe = string(probe)
+	}
 	probe, err := strconv.Unquote(fmt.Sprintf(`"%s"`, scanner.config.Probe))
 	if err != nil {
 		panic("Probe error")
 	}
 	scanner.probe = []byte(probe)
+	log2.Infof("probe: % x\n", scanner.probe)
 	return nil
 }
 
@@ -129,24 +140,35 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 	defer conn.Close()
 
 	var ret []byte
+	var newRet []byte
 	try = 0
-	for try < scanner.config.MaxTries {
-		try += 1
-		_, err = conn.Write(scanner.probe)
-		ret, readerr = zgrab2.ReadAvailable(conn)
-		if err != nil {
+	_, err = conn.Write(scanner.probe)
+	for {
+		try++
+		newRet, readerr = zgrab2.ReadAvailable(conn)
+		if len(newRet) > 0 {
+			log2.Infof("ip: %s response: % x", target.Host(), newRet)
+		}
+		ret = append(ret, newRet...)
+		if readerr == io.EOF {
+			log.Printf("ip: %s readerr: %v", target.Host(), readerr)
+			break
+		} else if readerr != nil {
+			errStr := readerr.Error()
+			if errStr[len(errStr)-11:] == "i/o timeout" {
+				break
+			}
 			continue
 		}
-		if readerr != io.EOF && readerr != nil {
-			continue
-		}
-		break
 	}
 	if err != nil {
 		return zgrab2.TryGetScanStatus(err), nil, err
 	}
 	if readerr != io.EOF && readerr != nil {
-		return zgrab2.TryGetScanStatus(readerr), nil, readerr
+		errStr := readerr.Error()
+		if errStr[len(errStr)-11:] != "i/o timeout" {
+			return zgrab2.TryGetScanStatus(readerr), nil, readerr
+		}
 	}
 	results := Results{Banner: string(ret), Length: len(ret)}
 	if scanner.regex.Match(ret) {
