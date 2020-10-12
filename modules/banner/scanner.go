@@ -158,7 +158,7 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 			if errStr[len(errStr)-11:] == "i/o timeout" {
 				break
 			}
-			continue
+			break
 		}
 	}
 	if err != nil {
