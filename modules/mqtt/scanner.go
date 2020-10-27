@@ -4,6 +4,7 @@
 package mqtt
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ type Flags struct {
 	ProbeFile string `long:"probe-file" description:"File to get probe from."`
 	Pattern   string `long:"pattern" description:"Pattern to match, must be valid regexp."`
 	MaxTries  int    `long:"max-tries" default:"1" description:"Number of tries for timeouts and connection errors before giving up."`
+	TLS       string `long:"tls" default:"false" description:"Whether the connections should be TLS or not"`
 }
 
 // Module is the implementation of the zgrab2.Module interface.
@@ -32,9 +34,10 @@ type Module struct {
 
 // Scanner is the implementation of the zgrab2.Scanner interface.
 type Scanner struct {
-	config *Flags
-	regex  *regexp.Regexp
-	probe  []byte
+	config    *Flags
+	regex     *regexp.Regexp
+	probe     []byte
+	tlsConfig *tls.Config
 }
 
 type Results struct {
@@ -114,6 +117,12 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 	}
 	scanner.probe = []byte(probe)
 	log2.Infof("probe: % x\n", scanner.probe)
+
+	if scanner.config.TLS != "false" {
+		scanner.tlsConfig = &tls.Config{
+			InsecureSkipVerify: true,
+		}
+	}
 	return nil
 }
 
@@ -123,14 +132,18 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 	try := 0
 	var (
 		conn    net.Conn
+		tlsConn *tls.Conn
 		err     error
 		readerr error
 	)
 	for try < scanner.config.MaxTries {
-		try += 1
+		try++
 		conn, err = target.Open(&scanner.config.BaseFlags)
 		if err != nil {
 			continue
+		}
+		if scanner.config.TLS != "false" {
+			tlsConn = tls.Client(conn, scanner.tlsConfig)
 		}
 		break
 	}
@@ -138,14 +151,24 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 		return zgrab2.TryGetScanStatus(err), nil, err
 	}
 	defer conn.Close()
+	defer tlsConn.Close()
 
 	var ret []byte
 	var newRet []byte
 	try = 0
-	_, err = conn.Write(scanner.probe)
+	if scanner.config.TLS != "false" {
+		_, err = tlsConn.Write(scanner.probe)
+
+	} else {
+		_, err = conn.Write(scanner.probe)
+	}
 	for {
 		try++
-		newRet, readerr = zgrab2.ReadAvailable(conn)
+		if scanner.config.TLS != "false" {
+			newRet, readerr = zgrab2.ReadAvailable(tlsConn)
+		} else {
+			newRet, readerr = zgrab2.ReadAvailable(conn)
+		}
 		if len(newRet) > 0 {
 			log2.Infof("ip: %s response: % x", target.Host(), newRet)
 		}
