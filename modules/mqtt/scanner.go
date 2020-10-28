@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net"
+	"os"
 	"regexp"
 	"strconv"
 
@@ -119,8 +120,13 @@ func (scanner *Scanner) Init(flags zgrab2.ScanFlags) error {
 	log2.Infof("probe: % x\n", scanner.probe)
 
 	if scanner.config.TLS != "false" {
+		keyz, err := os.Create("tls-keys")
+		if err != nil {
+			log.Fatal("Could not open tls-keys for writing")
+		}
 		scanner.tlsConfig = &tls.Config{
 			InsecureSkipVerify: true,
+			KeyLogWriter:       keyz,
 		}
 	}
 	return nil
@@ -158,7 +164,6 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 	try = 0
 	if scanner.config.TLS != "false" {
 		_, err = tlsConn.Write(scanner.probe)
-
 	} else {
 		_, err = conn.Write(scanner.probe)
 	}
@@ -175,22 +180,18 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 		ret = append(ret, newRet...)
 		if readerr == io.EOF {
 			log.Printf("ip: %s readerr: %v", target.Host(), readerr)
-			break
-		} else if readerr != nil {
-			errStr := readerr.Error()
-			if errStr[len(errStr)-11:] == "i/o timeout" {
-				break
-			}
-			break
 		}
+		break
 	}
 	if err != nil {
 		return zgrab2.TryGetScanStatus(err), nil, err
 	}
 	if readerr != io.EOF && readerr != nil {
 		errStr := readerr.Error()
-		if errStr[len(errStr)-11:] != "i/o timeout" {
+		if len(errStr) > 11 && errStr[len(errStr)-11:] != "i/o timeout" {
 			return zgrab2.TryGetScanStatus(readerr), nil, readerr
+		} else if len(errStr) <= 11 {
+			log2.Infof("ShortErr: %v\n", errStr)
 		}
 	}
 	results := Results{Banner: string(ret), Length: len(ret)}
