@@ -4,6 +4,7 @@ go 1.12
 
 require (
 	github.com/prometheus/client_golang v1.1.0
+	github.com/refraction-networking/utls v0.0.0-20200820030103-33a29038e742
 	github.com/sirupsen/logrus v1.4.2
 	github.com/zmap/zcrypto v0.0.0-20200508204656-27de22294d44
 	github.com/zmap/zflags v1.4.0-beta.1

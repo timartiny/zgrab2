@@ -150,6 +150,13 @@ func (scanner *Scanner) Scan(target zgrab2.ScanTarget) (zgrab2.ScanStatus, inter
 		}
 		if scanner.config.TLS != "false" {
 			tlsConn = tls.Client(conn, scanner.tlsConfig)
+			err = tlsConn.Handshake()
+			if err == nil {
+				certs := tlsConn.ConnectionState().PeerCertificates
+				for _, cert := range certs {
+					log2.Infof("ip: %v, cert: %v", target.Host(), cert.Raw)
+				}
+			}
 		}
 		break
 	}
